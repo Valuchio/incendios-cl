@@ -1,1 +1,1 @@
-Instalar requeriments pipinstall requeriments ya que la carpeta del entorno virtual se tuvo que eliminar al pesar + de 50MB
+Instalar requeriments pipinstall requeriments ya que la carpeta del entorno virtual se tuvo que eliminar al pesar + de 50MB mayor informacion del proyecto en https://duoccl0-my.sharepoint.com/personal/val_rodriguezs_duocuc_cl/_layouts/15/onedrive.aspx?id=%2Fpersonal%2Fval%5Frodriguezs%5Fduocuc%5Fcl%2FDocuments%2FCapstone&ga=1
