@@ -1,0 +1,4 @@
+pip install gspread google-auth google-auth-httplib2 google-auth-oauthlib
+
+python src\funciones\actualizar_google_sheet_append.py
+quiero ser mas especifico anteriormente me explique mal 

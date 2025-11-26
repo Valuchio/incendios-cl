@@ -1,0 +1,44 @@
+cd C:\proyectos\incendios-cl
+.\activate_project.ps1
+
+
+-Ejecucion pipeline
+
+.\pipeline_etl.ps1
+
+Si sale el mensaje de Execution Policy
+Set-ExecutionPolicy Bypass -Scope CurrentUser
+
+
+
+
+1) EJECUTAR INGESTA (genera raw.xlsx)
+
+spark-submit src/ingesta/ingesta_spark.py bearer="AAAAAAAAAAAAAAAAAAAAAHG13gEAAAAAydrmYwOwEyjEIfkpfZbxosQTNs8%3D0yQbBhUA2yAHC6SxWvTDnehqtf5nPn4bRtwUfMCtynLeVj7ZLP" user="CentralCBS" max=10 base_dir="C:\proyectos\incendios-cl\data"
+
+spark-submit src/ingesta/ingesta_spark.py bearer="..." user="..." max=10 base_dir="C:\proyectos\incendios-cl\data"
+(Base en 1 sola linea )
+
+AAAAAAAAAAAAAAAAAAAAAHG13gEAAAAAydrmYwOwEyjEIfkpfZbxosQTNs8%3D0yQbBhUA2yAHC6SxWvTDnehqtf5nPn4bRtwUfMCtynLeVj7ZLP  vale
+
+AAAAAAAAAAAAAAAAAAAAACdi3gEAAAAA1m0603hQJby3ZqI68XhEMWqd8nQ%3DdOrnfZopHeffxgt8oHcYxcNxCurzDFrZpPSRRg357btvpcnS5d leo 1
+
+AAAAAAAAAAAAAAAAAAAAALwH4gEAAAAAzNNe%2FeL2btzjdY4vHNCsmGcFFrE%3DG4CeLBO1a2b4JeY7RfweBqHl6P1uxczj1v3hM270BChCHrKU3o leo 2
+
+(https://developer.x.com/en/portal/dashboard)
+
+CentralCBS
+CENTRAL132MAIPU
+
+
+
+ 2) EJECUTAR NORMALIZACIÓN (lee raw.xlsx y genera refined.xlsx)
+spark-submit src/normalizacion/normalizacion_spark.py base_dir="C:\proyectos\incendios-cl\data"
+
+
+ 3) EJECUTAR CURADO (lee refined.xlsx y genera curated.xlsx)
+spark-submit src/curado/curado_spark.py base_dir="C:\proyectos\incendios-cl\data"
+
+
+ 4) EJECUTAR Leer (lee refined.xlsx y genera curated.xlsx)
+spark-submit src\funciones\leer_curado.py base_dir="C:\proyectos\incendios-cl\data" n=999

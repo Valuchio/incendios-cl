@@ -1,2 +1,3 @@
 # Ignorar carpeta de credenciales
 credenciales/bigquery.json
+secrets/credentials.json

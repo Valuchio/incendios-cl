@@ -1,0 +1,259 @@
+WITH
+
+-- ***********************************************************************************
+-- CTEs DE LA SEGUNDA CONSULTA (ÚLTIMO APU/AUTOLAND POR AERONAVE)
+-- ***********************************************************************************
+
+APU_AUTOLAND_AGGR AS (
+    SELECT 
+      case 
+        when actual_flight_leg_registration_code like 'CC%' then regexp_replace(actual_flight_leg_registration_code, r'^(CC)(...)$',r'\1-\2') 
+        when actual_flight_leg_registration_code like 'PR%' then regexp_replace(actual_flight_leg_registration_code, r'^(PR)(...)$',r'\1-\2') 
+        when actual_flight_leg_registration_code like 'PT%' then regexp_replace(actual_flight_leg_registration_code, r'^(PT)(...)$',r'\1-\2') 
+        when actual_flight_leg_registration_code like 'PS%' then regexp_replace(actual_flight_leg_registration_code, r'^(PS)(...)$',r'\1-\2') 
+        when actual_flight_leg_registration_code like 'HC%' then regexp_replace(actual_flight_leg_registration_code, r'^(HC)(...)$',r'\1-\2') 
+        when actual_flight_leg_registration_code like 'EC%' then regexp_replace(actual_flight_leg_registration_code, r'^(EC)(...)$',r'\1-\2') 
+        else actual_flight_leg_registration_code
+      end as AC_REG_CD,
+      operating_flight_num, 
+      CAST(rescheduled_flight_leg_block_off_date_utc AS DATE) AS sys_date,
+      
+      CASE WHEN count(CASE WHEN APUCHECK = 'YS' THEN 1 END) > 1 THEN 1 ELSE count(CASE WHEN APUCHECK = 'YS' THEN 1 END) END AS APUCHECK_YS,
+      CASE WHEN count(CASE WHEN AUTOLAND = 'YS' THEN 1 END) > 1 THEN 1 ELSE count(CASE WHEN AUTOLAND = 'YS' THEN 1 END) END AS AUTOLAND_YS
+
+    FROM `so-cm-opanalytics-dev.Operations_Engineering.Flight_Summary`
+    GROUP BY 1, 2, 3 
+),
+
+LAST_APU_START_DATA AS (
+    SELECT
+        AC_REG_CD,
+        operating_flight_num AS LAST_APU_FLIGHT_NUM, 
+        sys_date AS LAST_APU_YS_DATE_RECENT
+    FROM (
+        SELECT 
+            *, 
+            ROW_NUMBER() OVER(PARTITION BY AC_REG_CD ORDER BY sys_date DESC) AS rn_recent
+        FROM APU_AUTOLAND_AGGR
+        WHERE APUCHECK_YS = 1
+    )
+    WHERE rn_recent = 1
+),
+
+LAST_AUTOLAND_DATA AS (
+    SELECT
+        AC_REG_CD,
+        operating_flight_num AS LAST_AUTOLAND_FLIGHT_NUM,
+        sys_date AS LAST_AUTOLAND_YS_DATE_RECENT
+    FROM (
+        SELECT 
+            *, 
+            ROW_NUMBER() OVER(PARTITION BY AC_REG_CD ORDER BY sys_date DESC) AS rn_recent
+        FROM APU_AUTOLAND_AGGR
+        WHERE AUTOLAND_YS = 1
+    )
+    WHERE rn_recent = 1
+),
+
+-- ***********************************************************************************
+-- CTE NUEVA: CICLOS DE VUELO MENSUALES (Agregada aquí)
+-- ***********************************************************************************
+FLIGHT_CYCLES_DIM AS (
+  SELECT
+    Matricula_Real_del_tramo AS AC_REG_CD,
+    DATE_TRUNC(FECHA_REPROGRAMADA_UTC, MONTH) AS month_date,
+    SUM(SWT) AS Monthly_Cycles
+  FROM
+    `dlakedomain-prod-20dl.dmt_flight_otp_us.Base`
+  WHERE
+    -- Se ajustó a 12 meses para coincidir con la ventana de tiempo del reporte principal
+    Fecha_reprogramada_utc >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH)
+    AND swt = 1
+    AND Indicador_de_vuelo_cancelado = 0
+    AND airtime IS NOT NULL
+  GROUP BY 1, 2
+),
+
+-- ***********************************************************************************
+-- CTEs DE LA CONSULTA INICIAL (BASE DE DATOS Y RANKING)
+-- ***********************************************************************************
+
+aircraft_registration_dim AS (
+  SELECT 
+    CASE
+      WHEN aircraft_registration_code LIKE 'LAN-PT-TML' THEN 'PT-TML' 
+      ELSE aircraft_registration_code
+    END AS AC_REG_CD,
+    fleet_code AS ASSMBL, 
+    CASE 
+      WHEN sub_fleet_code LIKE 'A318%' THEN 'A318'
+      WHEN sub_fleet_code LIKE 'A319%' THEN 'A319'
+      WHEN sub_fleet_code LIKE 'A320%' THEN 'A320'
+      WHEN sub_fleet_code LIKE 'A321%' THEN 'A321'
+      WHEN sub_fleet_code LIKE '767%' THEN 'B767'
+      WHEN sub_fleet_code LIKE 'B787%' THEN 'B787'
+      WHEN sub_fleet_code LIKE 'A340%' THEN 'A340'
+      WHEN sub_fleet_code LIKE 'A350%' THEN 'A350'
+      WHEN sub_fleet_code LIKE 'B777%' THEN 'B777'
+      ELSE sub_fleet_code
+    END AS SUB_ASSMBL, 
+    CASE
+      WHEN operating_airline_iata_code = 'XL' AND aircraft_registration_code LIKE 'HC-%' THEN 'XL-HC'
+      WHEN operating_airline_iata_code = 'XL' AND aircraft_registration_code LIKE 'CC-%' THEN 'XL-CC'
+      ELSE operating_airline_iata_code
+    END AS IATA_CD, 
+    authority_code, 
+    CASE authority_code
+      WHEN 'B777LA' THEN 'B777JJ' 
+      WHEN 'B777UC' THEN 'B777JJ'
+      WHEN 'B787-8LA' THEN 'B787LA'
+      WHEN 'B787-9JJ' THEN 'B787JJ'
+      WHEN 'B787-9LA' THEN 'B787LA'
+      WHEN 'B767J18' THEN 'B767SSC'
+      WHEN 'B767L7' THEN 'B767UC'
+      WHEN 'B767M3' THEN 'B767UC'
+      WHEN 'A320DLA' THEN 'A320LA'
+      WHEN 'A321JJ' THEN 'A320JJ'
+      WHEN 'A321LA' THEN 'A320LA'
+      WHEN 'A3194C' THEN 'A3204C'
+      WHEN 'A319JJ' THEN 'A320JJ'
+      WHEN 'A319LP' THEN 'A320LP'
+      WHEN 'A319XL' THEN 'A320XL' 
+      ELSE authority_code 
+    END AS iDivim_Group, 
+    inventory_condition_code, 
+    CAST(inventory_snapshot_datetime AS DATE) AS sys_date,
+    DATE_TRUNC(CAST(inventory_snapshot_datetime AS DATE), MONTH) AS sys_date_month,
+    ROW_NUMBER() OVER(
+      PARTITION BY aircraft_msn_number, DATE_TRUNC(CAST(inventory_snapshot_datetime AS DATE), MONTH) 
+      ORDER BY inventory_snapshot_datetime DESC
+    ) AS rn_aviones_mensual 
+    
+  FROM `emx-data-prod-e6c5.edivim_kpi_core.inventory_aircraft_registration_daily`
+   
+  WHERE
+    CAST(inventory_snapshot_datetime AS DATE) >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH)
+    AND CAST(inventory_snapshot_datetime AS DATE) <= DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+    AND NOT (inventory_condition_code = 'ARCHIVE')
+    AND aircraft_registration_code NOT IN ('FAC985', 'FAB2101', 'B767_PSE', 'A320F_PSE', 'B787-9_PSE','HK-4491')
+),
+
+HEAVY_MAINT_DIM AS (
+  SELECT
+    aircraft_registration_code as AC_REG_CD, 
+    start_date,
+    end_date,
+    ROW_NUMBER() OVER (
+      PARTITION BY aircraft_registration_code
+      ORDER BY start_date DESC 
+    ) AS rn_manto
+  FROM `emx-data-prod-e6c5.heavy_planner_chain.heavy_maintenance_chain_transposed`
+  WHERE    
+  end_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH)
+  AND start_date <= DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)  
+  AND aircraft_registration_code IS NOT NULL  
+),
+
+APUSTART_AUTOLAND_DIM AS (
+SELECT 
+  case 
+    when actual_flight_leg_registration_code like 'CC%' then regexp_replace(actual_flight_leg_registration_code, r'^(CC)(...)$',r'\1-\2') 
+    when actual_flight_leg_registration_code like 'PR%' then regexp_replace(actual_flight_leg_registration_code, r'^(PR)(...)$',r'\1-\2') 
+    when actual_flight_leg_registration_code like 'PT%' then regexp_replace(actual_flight_leg_registration_code, r'^(PT)(...)$',r'\1-\2') 
+    when actual_flight_leg_registration_code like 'PS%' then regexp_replace(actual_flight_leg_registration_code, r'^(PS)(...)$',r'\1-\2') 
+    when actual_flight_leg_registration_code like 'HC%' then regexp_replace(actual_flight_leg_registration_code, r'^(HC)(...)$',r'\1-\2') 
+    when actual_flight_leg_registration_code like 'EC%' then regexp_replace(actual_flight_leg_registration_code, r'^(EC)(...)$',r'\1-\2') 
+    else actual_flight_leg_registration_code
+  end as AC_REG_CD,
+    DATE_TRUNC(CAST(rescheduled_flight_leg_block_off_date_utc AS DATE), MONTH) AS month_date,
+    max(CASE WHEN APUCHECK = 'YS' THEN 1 END) AS MONTHLY_APUCHECK_YS,
+    max(CASE WHEN APUCHECK = 'YU' THEN 1 END) AS MONTHLY_APUCHECK_YU,
+    max(CASE WHEN AUTOLAND = 'YS' THEN 1 END) AS MONTHLY_AUTOLAND_YS,
+    max(CASE WHEN AUTOLAND = 'YU' THEN 1 END) AS MONTHLY_AUTOLAND_YU,
+    MAX(CASE WHEN APUCHECK = 'YS' THEN CAST(rescheduled_flight_leg_block_off_date_utc AS DATE) END) AS LAST_APU_YS_DATE,
+    MAX(CASE WHEN AUTOLAND = 'YS' THEN CAST(rescheduled_flight_leg_block_off_date_utc AS DATE) END) AS LAST_AUTOLAND_YS_DATE
+
+FROM
+    `so-cm-opanalytics-dev.Operations_Engineering.Flight_Summary`
+WHERE
+    CAST(rescheduled_flight_leg_block_off_date_utc AS DATE) >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH)
+    AND CAST(rescheduled_flight_leg_block_off_date_utc AS DATE) <= DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+GROUP BY 1, 2
+),
+
+UniqueMonths AS (
+    SELECT DISTINCT sys_date_month FROM aircraft_registration_dim WHERE rn_aviones_mensual = 1
+),
+
+MonthlyRank AS (
+  SELECT sys_date_month, RANK() OVER (ORDER BY sys_date_month DESC) AS RK_Mensual FROM UniqueMonths
+),
+
+MAIN_DATA AS (
+  SELECT 
+    T1.AC_REG_CD, T1.ASSMBL, T1.SUB_ASSMBL, T1.IATA_CD,  T1.authority_code, T1.iDivim_Group,  T1.inventory_condition_code,
+    T1.sys_date, T1.sys_date_month, 
+    T4.RK_Mensual AS RK, 
+    
+    -- >>> NUEVA COLUMNA DE CICLOS AGREGADA AQUÍ <<<
+    COALESCE(T7.Monthly_Cycles, 0) AS CICLOS_MENSUALES,
+    
+    CASE
+      WHEN T2.start_date IS NOT NULL AND T2.start_date <= date_sub(current_date(),interval 1 day) AND T2.end_date >= date_sub(current_date(),interval 1 day) AND T1.sys_date = date_sub(current_date(),interval 1 day)
+      THEN '🛠️' 
+      ELSE '🛫'
+    END AS OPERATIONAL_STATUS,
+    T2.start_date,  T2.end_date,  
+    COALESCE(T3.MONTHLY_APUCHECK_YS, 0) AS APUCHECK_YS_MONTHLY, COALESCE(T3.MONTHLY_APUCHECK_YU, 0) AS APUCHECK_YU_MONTHLY,
+    COALESCE(T3.MONTHLY_AUTOLAND_YS, 0 ) AS AUTOLAND_YS_MONTHLY, COALESCE(T3.MONTHLY_AUTOLAND_YU, 0) AS AUTOLAND_YU_MONTHLY,
+    
+    T3.LAST_APU_YS_DATE, 
+    T3.LAST_AUTOLAND_YS_DATE,
+    
+    -- Columna de APU corregida (utiliza T2 para las fechas recientes)
+    COALESCE(
+        CAST(T3.LAST_APU_YS_DATE AS STRING),     -- Intenta usar la fecha mensual (T3)
+        CAST(T5.LAST_APU_YS_DATE_RECENT AS STRING), -- Si T3 es NULL, usa la fecha más reciente (T5)
+        '--'                                    -- Si ambas son NULL, usa '--'
+    ) AS LAST_APU_YS_DATE_TEXTUAL,
+    
+    -- Columna de AUTOLAND corregida (utiliza T3 para las fechas recientes)
+    COALESCE(
+        CAST(T3.LAST_AUTOLAND_YS_DATE AS STRING), 
+        CAST(T6.LAST_AUTOLAND_YS_DATE_RECENT AS STRING),
+        '--'
+    ) AS LAST_AUTOLAND_YS_DATE_TEXTUAL
+
+  FROM aircraft_registration_dim AS T1
+  LEFT JOIN HEAVY_MAINT_DIM AS T2 ON T1.AC_REG_CD = T2.AC_REG_CD
+  LEFT JOIN APUSTART_AUTOLAND_DIM AS T3 ON T1.AC_REG_CD = T3.AC_REG_CD AND DATE_TRUNC(T1.sys_date, MONTH) = T3.month_date 
+  LEFT JOIN MonthlyRank AS T4 ON T1.sys_date_month = T4.sys_date_month
+  LEFT JOIN LAST_APU_START_DATA AS T5 ON T1.AC_REG_CD = T5.AC_REG_CD 
+  LEFT JOIN LAST_AUTOLAND_DATA AS T6 ON T1.AC_REG_CD = T6.AC_REG_CD
+  
+  -- >>> JOIN NUEVO PARA CICLOS <<<
+  LEFT JOIN FLIGHT_CYCLES_DIM AS T7 ON T1.AC_REG_CD = T7.AC_REG_CD AND T1.sys_date_month = T7.month_date
+
+  WHERE 
+    T1.rn_aviones_mensual = 1
+    AND (T2.rn_manto = 1 OR T2.rn_manto IS NULL)
+)
+
+-- ***********************************************************************************
+-- SELECT FINAL
+-- ***********************************************************************************
+SELECT
+    T1.*, 
+    T5.LAST_APU_FLIGHT_NUM, 
+    T5.LAST_APU_YS_DATE_RECENT, 
+    T6.LAST_AUTOLAND_FLIGHT_NUM,
+    T6.LAST_AUTOLAND_YS_DATE_RECENT
+    
+FROM
+    MAIN_DATA AS T1
+LEFT JOIN
+    LAST_APU_START_DATA AS T5
+    ON T1.AC_REG_CD = T5.AC_REG_CD 
+LEFT JOIN
+    LAST_AUTOLAND_DATA AS T6
+    ON T1.AC_REG_CD = T6.AC_REG_CD
